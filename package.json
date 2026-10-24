@@ -1,0 +1,15 @@
+{
+  "name": "rebase-docs",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A Google Docs Editor add-on for rebasing linked copies onto their parents.",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "check": "node scripts/check.js",
+    "demo": "node scripts/demo.js",
+    "setup": "node scripts/setup.js",
+    "test:ui": "node test/browser.cjs"
+  },
+  "devDependencies": { "playwright": "1.57.0" },
+  "engines": { "node": ">=20" }
+}

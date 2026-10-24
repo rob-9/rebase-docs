@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <base target="_blank">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root{font:13px/1.55 system-ui,-apple-system,sans-serif;color:#23332e;background:#f6f8f5;color-scheme:light}
+    *{box-sizing:border-box}body{margin:0;padding:22px 16px}h1{font-size:22px;letter-spacing:-.7px;margin:5px 0}h2{font-size:14px;margin:0 0 9px}p{margin:8px 0}a{color:#14634b;overflow-wrap:anywhere}button,input{font:inherit}
+    .eyebrow{font-size:10px;font-weight:750;text-transform:uppercase;letter-spacing:1.8px;color:#567065}.muted{color:#687870;font-size:12px}.card{background:white;border:1px solid #dce3dc;border-radius:12px;padding:16px;margin-top:16px}.status{display:inline-flex;align-items:center;gap:7px;background:#e9f1e8;border-radius:20px;padding:4px 10px;font-size:11px;font-weight:650;margin:10px 0 2px}.dot{height:6px;width:6px;background:#337955;border-radius:50%}.status.warn{background:#fff0d5;color:#81520c}.status.warn .dot{background:#c07c18}.branch{padding-left:17px;border-left:2px solid #dce6dc;margin:13px 0 15px}.branch strong,.branch a{display:block;font-size:12px}.branch .arrow{color:#87a295;margin:5px 0}
+    button{cursor:pointer;min-height:37px;border:1px solid #cfd9d1;background:white;color:#23332e;padding:8px 12px;border-radius:7px;font-weight:600}button:hover{background:#edf3ec}button.primary{background:#215c45;border-color:#215c45;color:white}button.primary:hover{background:#174b36}button:disabled{opacity:.5;cursor:wait}button.full{width:100%}button.link{border:0;background:transparent;padding:3px 0;color:#687870;font-size:12px}.row{display:flex;gap:8px;align-items:center}.row>button{flex:1}label{display:block;margin:12px 0 5px;font-size:12px;font-weight:600}label.toggle{display:flex;gap:9px;align-items:flex-start;font-weight:400}input[type=text],input[type=url]{width:100%;border:1px solid #cfd9d1;padding:9px;border-radius:6px;background:#fff}input[type=checkbox]{accent-color:#215c45;margin-top:4px}input:focus,button:focus-visible,a:focus-visible{outline:2px solid #6ba088;outline-offset:2px}.error{color:#8e3228;background:#fff0ed;padding:11px;border-radius:8px;overflow-wrap:anywhere;margin-top:14px}.success{background:#e9f1e8;padding:12px;border-radius:8px;margin-top:12px}details{margin-top:16px}summary{cursor:pointer;font-weight:600;font-size:12px}.foot{border-top:1px solid #dde5dc;padding-top:14px;margin-top:20px;font-size:11px;color:#718176}[hidden]{display:none!important}
+  </style>
+</head>
+<body>
+  <div class="eyebrow">Keep your own version</div>
+  <h1>Docs Rebase <span aria-hidden="true">↳</span></h1>
+  <p class="muted">Bring parent updates into your copy, with your changes intact.</p>
+  <div id="error" class="error" role="alert" hidden></div>
+  <div id="loading" class="muted" role="status">Connecting to this document…</div>
+
+  <section id="linked" class="card" hidden>
+    <div id="badge" class="status"><span class="dot"></span><span id="statusText">Ready</span></div>
+    <div class="branch">
+      <span class="eyebrow">Parent</span><a id="parentLink" rel="noopener noreferrer"></a>
+      <div class="arrow" aria-hidden="true">↓</div>
+      <span class="eyebrow">Your copy</span><strong id="copyTitle"></strong>
+    </div>
+    <p id="detail" class="muted" aria-live="polite"></p>
+    <button id="review" class="primary full" hidden>Review conflicts</button>
+    <button id="sync" class="full">Sync now</button>
+    <label class="toggle"><input id="auto" type="checkbox"><span>Sync automatically<br><span class="muted">Check every 15 seconds while this sidebar is open.</span></span></label>
+    <label class="toggle"><input id="background" type="checkbox"><span>Also check in the background<br><span class="muted">About once an hour. Review conflicts when you return.</span></span></label>
+    <p id="lastSync" class="muted"></p>
+    <details><summary>Disconnect this copy</summary><p class="muted">Keeps both documents and removes this account’s saved parent link. Linking again requires matching text.</p><button id="disconnect">Disconnect</button></details>
+  </section>
+
+  <section id="unlinked" class="card" hidden>
+    <h2>Start with a linked copy</h2>
+    <p class="muted">Create a copy of this document to keep editing independently and receive its future text updates.</p>
+    <button id="create" class="primary full">Create linked copy</button>
+    <div id="created" class="success" hidden><strong>Copy created</strong><p><a id="createdLink" rel="noopener noreferrer">Open your linked copy ↗</a></p><p class="muted">Open Docs Rebase in the copy to start watching its parent. During development, add the copy as another Editor add-on test document.</p></div>
+    <details><summary>Already have a matching copy?</summary>
+      <p class="muted">Link it before editing, while its text still matches the parent. Old copies with unknown history cannot be safely linked.</p>
+      <label for="parentInput">Parent document URL</label><input id="parentInput" type="url" placeholder="https://docs.google.com/document/d/…">
+      <button id="link" class="full" style="margin-top:9px">Link this copy</button>
+    </details>
+  </section>
+  <p class="foot">Prototype · Text changes in one-tab documents, up to 20,000 characters. Parent formatting and comments don’t sync; inserted text uses local styling. Tables, images, and suggested edits pause syncing. Configure each copy from one Google account.</p>
+  <script>
+    'use strict';
+    const $ = id => document.getElementById(id);
+    let busy = false, state = null, title = '', timer = null, prompted = false, failures = 0;
+    function rpc(name, ...args) {
+      return new Promise((resolve, reject) => google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[name](...args));
+    }
+    function error(message) { $('error').textContent = message; $('error').hidden = !message; }
+    function schedule() {
+      clearTimeout(timer);
+      if (state && state.auto && state.status !== 'unlinked') timer = setTimeout(() => check(true), Math.min(120000, 15000 * Math.pow(2, failures)));
+    }
+    function render(next) {
+      state = next;
+      $('loading').hidden = true;
+      const linked = next.status !== 'unlinked';
+      $('linked').hidden = !linked; $('unlinked').hidden = linked;
+      if (!linked) { prompted = false; schedule(); return; }
+      $('copyTitle').textContent = title;
+      $('parentLink').textContent = next.parentTitle || 'Parent document';
+      $('parentLink').href = 'https://docs.google.com/document/d/' + encodeURIComponent(next.parentId) + '/edit';
+      $('auto').checked = !!next.auto; $('background').checked = !!next.background;
+      const needsReview = ['conflict', 'recovery'].includes(next.status);
+      $('badge').classList.toggle('warn', needsReview || !next.auto);
+      $('review').hidden = !needsReview; $('sync').hidden = needsReview;
+      $('review').textContent = next.status === 'recovery' ? 'Review interrupted sync' : 'Review conflicts';
+      const labels = {ready:'Watching parent',current:'Up to date with parent',synced:'Parent updates merged',paused:'Automatic sync paused',conflict:'Changes need your input',recovery:'Interrupted sync',recovered:'Ready to check again'};
+      $('statusText').textContent = labels[next.status] || 'Ready';
+      $('detail').textContent = next.status === 'conflict' ? `${next.count} overlapping change${next.count === 1 ? '' : 's'}. Choose which text to keep.` : next.status === 'recovery' ? 'Review the previous sync before new changes can be applied.' : next.auto ? 'Independent changes merge automatically. Overlapping edits come to you.' : 'Use Sync now, or turn automatic sync back on.';
+      $('lastSync').textContent = next.lastSync ? 'Last sync · ' + new Date(next.lastSync).toLocaleString() : '';
+      if (!needsReview) prompted = false;
+      schedule();
+    }
+    async function perform(action) {
+      if (busy) return;
+      busy = true; clearTimeout(timer); error('');
+      document.querySelectorAll('button,input').forEach(el => el.disabled = true);
+      try { await action(); failures = 0; }
+      catch (e) { failures++; error(e.message || String(e)); }
+      finally { busy = false; document.querySelectorAll('button,input').forEach(el => el.disabled = false); schedule(); }
+    }
+    async function check(automatic) {
+      if (automatic && document.hidden) { schedule(); return; }
+      await perform(async () => {
+        const next = await rpc('checkForUpdates', automatic); render(next);
+        if (['conflict', 'recovery'].includes(next.status) && !prompted) {
+          prompted = true;
+          try { await rpc('showConflicts'); } catch (e) { prompted = false; throw e; }
+        }
+      });
+    }
+    $('sync').onclick = () => check(false);
+    $('review').onclick = () => perform(() => rpc('showConflicts'));
+    $('create').onclick = () => perform(async () => {
+      const result = await rpc('createLinkedCopy', '');
+      $('createdLink').href = result.url; $('created').hidden = false;
+    });
+    $('link').onclick = () => perform(async () => render(await rpc('linkExistingCopy', $('parentInput').value)));
+    $('disconnect').onclick = () => perform(async () => render(await rpc('disconnectCopy')));
+    async function settings() {
+      const previous = state;
+      await perform(async () => {
+        try { render(await rpc('saveSyncSettings', $('auto').checked, $('background').checked)); }
+        catch (e) { render(previous); throw e; }
+      });
+    }
+    $('auto').onchange = settings; $('background').onchange = settings;
+    (async () => {
+      await perform(async () => {
+        const initial = await rpc('getInitialState'); title = initial.documentTitle; render(initial);
+        if (initial.backgroundError) error('Background sync: ' + initial.backgroundError);
+      });
+      if (state && state.auto) check(true);
+    })();
+  </script>
+</body>
+</html>

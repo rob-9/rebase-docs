@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <base target="_blank">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    :root{font:14px/1.5 system-ui,-apple-system,sans-serif;color:#26352e;background:#f7f8f5;color-scheme:light}*{box-sizing:border-box}body{margin:0;padding:26px 28px 100px}h1{font-size:25px;letter-spacing:-.8px;margin:6px 0}p{margin:8px 0}.eyebrow{font-size:10px;text-transform:uppercase;letter-spacing:1.7px;font-weight:750;color:#6a7d6c}.muted{color:#6b786f;font-size:13px}.progress{font-size:12px;background:#e9eedf;border-radius:20px;padding:5px 12px;font-weight:600;white-space:nowrap}.heading{display:flex;justify-content:space-between;gap:20px;align-items:center;margin-bottom:24px}.conflict{border:1px solid #dce2d7;background:white;border-radius:12px;padding:19px;margin-top:18px}.conflict h2{font-size:14px;margin:0 0 12px}.context{font-size:12px;color:#6e7d71;white-space:pre-wrap;overflow-wrap:anywhere;max-height:80px;overflow:auto}.columns{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}.option{padding:14px;border:1px solid #d9e1d9;border-radius:8px;cursor:pointer;display:block;min-width:0}.option:has(input:checked){border-color:#357b58;background:#f0f6ee;box-shadow:0 0 0 1px #357b58}.option strong{font-size:12px}input{accent-color:#2b6b4a}pre{font:13px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;margin:10px 0 0;max-height:180px;overflow:auto}.base{background:#f3f4f0;padding:12px;border-radius:6px;margin:12px 0}.base summary{font-size:11px;cursor:pointer;color:#687566}.custom{margin-top:12px}textarea{width:100%;font:13px/1.6 ui-monospace,monospace;resize:vertical;min-height:90px;border:1px solid #ccd7ca;border-radius:6px;margin-top:9px;padding:10px;background:white;color:#26352e}.footer{position:fixed;bottom:0;left:0;right:0;background:#f7f8f5f5;border-top:1px solid #dbe2d5;padding:16px 28px;display:flex;align-items:center;justify-content:space-between;gap:12px}.actions{display:flex;gap:8px}button{font:600 13px system-ui;cursor:pointer;border:1px solid #cbd6c8;border-radius:7px;padding:10px 15px;background:white;color:#26352e}button:hover{background:#edf2e8}button.primary{background:#245b3e;border-color:#245b3e;color:white}button:disabled{opacity:.45;cursor:default}button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid #6a9f79;outline-offset:3px}.error{background:#fff0e8;border:1px solid #edcfbb;color:#8a4627;padding:12px;border-radius:7px;margin:15px 0}.success{background:#e7f1e3;padding:22px;border-radius:10px;margin-top:24px}.recovery-text{max-height:140px}.recovery-actions{display:flex;gap:12px;margin-top:18px}[hidden]{display:none!important}@media(max-width:560px){body{padding:18px 16px 140px}.columns{grid-template-columns:1fr}.heading{align-items:flex-start}.footer{padding:12px 16px;flex-wrap:wrap}.recovery-actions{flex-direction:column}}
+  </style>
+</head>
+<body>
+  <header class="heading"><div><div class="eyebrow">Docs Rebase · Review</div><h1 id="title">Make the final call.</h1><p id="subtitle" class="muted">Both versions changed the same text. Choose what belongs in your copy.</p></div><span id="progress" class="progress" aria-live="polite">Loading…</span></header>
+  <div id="error" class="error" role="alert" hidden></div>
+  <main id="conflicts" aria-busy="true"></main>
+  <div id="success" class="success" role="status" hidden></div>
+  <footer class="footer"><span id="footnote" class="muted">All choices apply together to your copy.</span><div class="actions"><button id="reload">Reload latest</button><button id="close">Later</button><button id="apply" class="primary" disabled>Apply resolutions</button></div></footer>
+  <script>
+    'use strict';
+    const $ = id => document.getElementById(id);
+    let view = null, choices = {}, busy = false, completed = false, stale = false;
+    function rpc(name, ...args) { return new Promise((resolve, reject) => google.script.run.withSuccessHandler(resolve).withFailureHandler(reject)[name](...args)); }
+    function element(tag, className, text) { const el = document.createElement(tag); if (className) el.className = className; if (text !== undefined) el.textContent = text; return el; }
+    function message(text) { $('error').textContent = text; $('error').hidden = !text; }
+    function progress() {
+      const total = view && view.conflicts ? view.conflicts.length : 0, selected = Object.keys(choices).length;
+      $('progress').textContent = view && view.status === 'recovery' ? 'Recovery' : `${selected} / ${total} resolved`;
+      $('apply').disabled = busy || stale || completed || !total || total !== selected;
+    }
+    function option(conflict, kind, label) {
+      const card = element('label', 'option' + (kind === 'custom' ? ' custom' : ''));
+      const radio = element('input'); radio.type = 'radio'; radio.name = conflict.id; radio.value = kind;
+      card.append(radio, element('strong', '', ' ' + label));
+      let editor;
+      if (kind === 'custom') {
+        editor = element('textarea'); editor.value = conflict.local; editor.setAttribute('aria-label', 'Custom text for conflict ' + (Number(conflict.id.slice(1)) + 1));
+        editor.addEventListener('input', () => { radio.checked = true; choices[conflict.id] = {kind, text: editor.value}; progress(); });
+        card.append(editor);
+      } else card.append(element('pre', '', conflict[kind] || '(delete this text)'));
+      radio.addEventListener('change', () => { choices[conflict.id] = {kind, text: editor && editor.value}; progress(); });
+      return card;
+    }
+    function render() {
+      choices = {}; completed = false; stale = false;
+      $('conflicts').replaceChildren(); $('success').hidden = true; $('apply').hidden = false;
+      $('close').textContent = 'Later'; $('footnote').textContent = 'All choices apply together to your copy.';
+      if (view.status === 'recovery') {
+        $('title').textContent = 'Check the interrupted sync.';
+        $('subtitle').textContent = 'The copy changed after an interrupted save. Compare the versions and tell us whether the planned update landed. Your current text stays in place.';
+        [['Before the sync',view.before],['Planned result',view.after],['Your copy now',view.current]].forEach(([label,text]) => {
+          const card = element('section','conflict'); card.append(element('h2','',label),element('pre','recovery-text',text)); $('conflicts').append(card);
+        });
+        const actions = element('div','recovery-actions');
+        [[true,'The update was applied'],[false,'The update was not applied']].forEach(([applied,label]) => {
+          const button = element('button','',label); button.onclick = () => act(async () => { await rpc('acknowledgeRecovery',view.token,applied); success('Recovery saved. Use Sync now in the sidebar to check the latest changes.'); }); actions.append(button);
+        });
+        $('conflicts').append(actions); $('apply').hidden = true;
+      } else if (!view.conflicts.length) {
+        $('title').textContent = 'Nothing to resolve.'; $('subtitle').textContent = 'Use Sync now in the sidebar to bring in any remaining parent updates.'; $('apply').hidden = true;
+      } else {
+        $('title').textContent = 'Make the final call.';
+        $('subtitle').textContent = `${view.childTitle} and ${view.parentTitle} changed the same text.`;
+        view.conflicts.forEach((conflict,index) => {
+          const section = element('section','conflict');
+          section.append(element('h2','',`Conflict ${index + 1}`));
+          if (conflict.before) section.append(element('div','context', '…' + conflict.before));
+          const base = element('details','base'); base.append(element('summary','','Previously synced text'),element('pre','',conflict.base || '(no text here)')); section.append(base);
+          const columns = element('div','columns'); columns.append(option(conflict,'local','Keep your copy'),option(conflict,'parent','Use parent')); section.append(columns,option(conflict,'custom','Write a combined version'));
+          if (conflict.after) section.append(element('div','context', conflict.after + '…'));
+          $('conflicts').append(section);
+        });
+      }
+      progress(); $('conflicts').setAttribute('aria-busy','false');
+    }
+    function success(text) { completed = true; $('success').textContent = text; $('success').hidden = false; $('conflicts').hidden = true; $('apply').hidden = true; $('close').textContent = 'Done'; $('progress').textContent = 'Complete'; $('footnote').textContent = 'Your parent document is unchanged.'; }
+    async function act(action) {
+      if (busy) return; busy = true; message('');
+      document.querySelectorAll('button,input,textarea').forEach(el => el.disabled = true);
+      try { await action(); }
+      catch (e) { stale = true; message((e.message || String(e)) + ' Reload latest to continue.'); }
+      finally { busy = false; document.querySelectorAll('button,input,textarea').forEach(el => el.disabled = false); if (!completed) progress(); }
+    }
+    async function load() { await act(async () => { view = await rpc('getConflictPreview'); $('conflicts').hidden = false; render(); }); }
+    $('reload').onclick = load;
+    $('close').onclick = () => google.script.host.close();
+    $('apply').onclick = () => act(async () => { await rpc('applyResolutions',view.token,choices); success('Resolved. Parent updates and your selected changes are now in your copy.'); });
+    load();
+  </script>
+</body>
+</html>
